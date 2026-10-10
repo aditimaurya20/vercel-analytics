@@ -1,19 +1,15 @@
 from typing import List
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 app = FastAPI()
 
-@app.middleware("http")
-async def always_cors(request: Request, call_next):
-    if request.method == "OPTIONS":
-        response = Response(status_code=200)
-    else:
-        response = await call_next(request)
-    response.headers["Access-Control-Allow-Origin"] = "*"
-    response.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
-    response.headers["Access-Control-Allow-Headers"] = "*"
-    return response
+CORS = {
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+}
 
 # (region, latency_ms, uptime_pct)
 DATA = [
@@ -42,6 +38,10 @@ def percentile(vals, p):
     hi = min(lo + 1, len(s) - 1)
     return s[lo] + (s[hi] - s[lo]) * (k - lo)
 
+@app.options("/{full_path:path}")
+def preflight(full_path: str = ""):
+    return JSONResponse(content={}, headers=CORS)
+
 @app.post("/{full_path:path}")
 def metrics(q: Query, full_path: str = ""):
     out = {}
@@ -52,4 +52,7 @@ def metrics(q: Query, full_path: str = ""):
         out[region] = {
             "avg_latency": sum(lat) / len(lat) if lat else None,
             "p95_latency": percentile(lat, 95) if lat else None,
-            "avg_uptime": sum(up) / len(up) if
+            "avg_uptime": sum(up) / len(up) if up else None,
+            "breaches": sum(1 for x in lat if x > q.threshold_ms),
+        }
+    return JSONResponse(content={**out, "regions": out}, headers=CORS)
