@@ -1,10 +1,19 @@
 from typing import List
-from fastapi import FastAPI
-from fastapi.middleware.cors import CORSMiddleware
+from fastapi import FastAPI, Request, Response
 from pydantic import BaseModel
 
 app = FastAPI()
-app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+@app.middleware("http")
+async def always_cors(request: Request, call_next):
+    if request.method == "OPTIONS":
+        response = Response(status_code=200)
+    else:
+        response = await call_next(request)
+    response.headers["Access-Control-Allow-Origin"] = "*"
+    response.headers["Access-Control-Allow-Methods"] = "POST, GET, OPTIONS"
+    response.headers["Access-Control-Allow-Headers"] = "*"
+    return response
 
 # (region, latency_ms, uptime_pct)
 DATA = [
@@ -43,7 +52,4 @@ def metrics(q: Query, full_path: str = ""):
         out[region] = {
             "avg_latency": sum(lat) / len(lat) if lat else None,
             "p95_latency": percentile(lat, 95) if lat else None,
-            "avg_uptime": sum(up) / len(up) if up else None,
-            "breaches": sum(1 for x in lat if x > q.threshold_ms),
-        }
-    return {**out, "regions": out}
+            "avg_uptime": sum(up) / len(up) if
