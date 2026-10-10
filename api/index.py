@@ -1,14 +1,14 @@
-from typing import List
-from fastapi import FastAPI
+import json
+from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
 
 app = FastAPI()
 
 CORS = {
     "Access-Control-Allow-Origin": "*",
-    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Methods": "GET, POST, PUT, DELETE, OPTIONS",
     "Access-Control-Allow-Headers": "*",
+    "Access-Control-Expose-Headers": "*",
 }
 
 # (region, latency_ms, uptime_pct)
@@ -27,10 +27,6 @@ DATA = [
     ("amer", 158.69, 99.14), ("amer", 132.55, 99.12), ("amer", 115.99, 98.133),
 ]
 
-class Query(BaseModel):
-    regions: List[str]
-    threshold_ms: float
-
 def percentile(vals, p):
     s = sorted(vals)
     k = (len(s) - 1) * p / 100
@@ -38,21 +34,29 @@ def percentile(vals, p):
     hi = min(lo + 1, len(s) - 1)
     return s[lo] + (s[hi] - s[lo]) * (k - lo)
 
-@app.options("/{full_path:path}")
-def preflight(full_path: str = ""):
-    return JSONResponse(content={}, headers=CORS)
-
-@app.post("/{full_path:path}")
-def metrics(q: Query, full_path: str = ""):
+def compute(regions, threshold):
     out = {}
-    for region in q.regions:
-        rows = [(l, u) for r, l, u in DATA if r == region.lower()]
+    for region in regions:
+        rows = [(l, u) for r, l, u in DATA if r == str(region).lower()]
         lat = [l for l, _ in rows]
         up = [u for _, u in rows]
         out[region] = {
             "avg_latency": sum(lat) / len(lat) if lat else None,
             "p95_latency": percentile(lat, 95) if lat else None,
             "avg_uptime": sum(up) / len(up) if up else None,
-            "breaches": sum(1 for x in lat if x > q.threshold_ms),
+            "breaches": sum(1 for x in lat if x > threshold),
         }
-    return JSONResponse(content={**out, "regions": out}, headers=CORS)
+    return out
+
+@app.api_route("/{full_path:path}", methods=["GET", "POST", "PUT", "DELETE", "OPTIONS", "HEAD", "PATCH"])
+async def handler(request: Request, full_path: str = ""):
+    if request.method != "POST":
+        return JSONResponse(content={"message": "send a POST request"}, headers=CORS)
+    try:
+        body = json.loads(await request.body() or b"{}")
+        regions = body.get("regions", [])
+        threshold = float(body.get("threshold_ms", 0))
+        out = compute(regions, threshold)
+        return JSONResponse(content={**out, "regions": out}, headers=CORS)
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=400, headers=CORS)
